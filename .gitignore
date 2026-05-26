@@ -1,0 +1,47 @@
+## Build outputs
+bin/
+obj/
+out/
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+project.lock.json
+project.assets.json
+
+## .NET Core / SDK
+*.pubxml
+*.pubxml.user
+publish/
+
+## Test results
+TestResults/
+coverage/
+*.trx
+*.coveragexml
+
+## Logs
+*.log
+logs/
+
+## OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## Secrets / config local
+appsettings.Local.json
+appsettings.Development.json
+*.pfx
+*.p12
+secrets.json

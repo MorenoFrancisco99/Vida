@@ -1,0 +1,16 @@
+
+Course: registers information about courses ive done or im doing
+{name: string, facultry: strig} 
+
+CyberdefenseWeekly: register completition of weekly tasks of cyberdefense course. Its a routinely schedule and resets every monday
+{course: Course, done: bool, beginDate: date, endDate: date}
+
+Tasks: registers information about things to do
+{name: string, beginDate: date, note: string}
+
+ExpireableTasks: registers information about tasks that have an expirity date, like TPs submition
+{course: Course, endDate:date}
+
+GeneralTasks
+{}
+
