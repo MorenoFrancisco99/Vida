@@ -2,22 +2,18 @@
 using static SpectreConsoleUtilities;
 namespace Tiempo;
 
-using System.Collections.Immutable;
 using Spectre.Console;
 
 public class Tiempo : IModule
 {
     public string Name => "Schedule";
-
     public string Description => "Administra funciones relacionadas a rutina y deadlines";
-
     public Repository DB { get; set; }
 
-    private record Course(int Id, string Name, string Faculty);
-    public record WeeklyCyberdefenseStatus
+    private record WeeklyCourse
     {
-        public int Id { get; init; }
-        public int Done { get; init; }
+        public long Id { get; init; }
+        public long Done { get; init; }
         public string BeginDate { get; init; }
         public string EndDate { get; init; }
         public string CourseName { get; init; }
@@ -26,141 +22,154 @@ public class Tiempo : IModule
         public bool IsDone => Done == 1;
         public DateTime Begin => DateTime.Parse(BeginDate);
         public DateTime End => DateTime.Parse(EndDate);
-    };
 
-    private record UndoneTask
+        public override string ToString() => $"{CourseName} [{(IsDone ? "green]Hecho" : "red]Pendiente")}[/]";
+    }
+
+    private record PendingTask
     {
-        public int? Id { get; init; }
-        public string Content { get; init; }
-        public string BeginDate { get; init; }
+        public long Id { get; init; }
+        public string Name { get; init; }
         public string EndDate { get; init; }
-
-        public DateTime Begin => DateTime.Parse(BeginDate);
         public DateTime End => DateTime.Parse(EndDate);
-    };
+        public override string ToString() => $"{Name} — vence {End:dd/MM/yyyy}";
+    }
 
+    // Tipo unificado para el selector
+    private record Selectable(string Label, Action MarkDone);
 
     public void GetDatabase(Repository db)
     {
-        if (DB != null) throw new Exception($"Database for Schedule module already settle");
+        if (DB != null) throw new Exception("Database for Schedule module already set");
         DB = db;
     }
 
-
     public async Task RunAsync()
     {
-        var CBWeekStatus = DB.Query<WeeklyCyberdefenseStatus>("""
-                SELECT 
-                    cw.Id,
-                    cw.Done,
-                    cw.BeginDate,
-                    cw.EndDate,
-                    c.Name AS CourseName,
-                    c.Faculty AS CourseFaculty
-                FROM CyberdefenseWeekly cw
-                JOIN Course c ON cw.CourseId = c.Id
-            """);
-
-        var today = DateTime.Today;
-        var currentMonday = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
-
-        var isNewWeek = CBWeekStatus.Any() && CBWeekStatus.First().Begin < currentMonday;
-
-        if (isNewWeek)
-        {
-            foreach (var task in CBWeekStatus.Where(x => !x.IsDone)) //save undone tasks
-            {
-                DB.Execute(
-                    "INSERT INTO UndoneTask (Content, BeginDate, EndDate) VALUES (@Content, @BeginDate, @EndDate)",
-                    new { Content = task.CourseName, task.BeginDate, task.EndDate }
-                );
-            }
-
-            //weekly cyberdefense reset
-            DB.Execute("""
-                UPDATE CyberdefenseWeekly 
-                SET Done = 0, BeginDate = @BeginDate, EndDate = @EndDate
-             """, new { BeginDate = currentMonday, EndDate = currentMonday.AddDays(7) });
-
-
-            //refresh week status
-            CBWeekStatus = DB.Query<WeeklyCyberdefenseStatus>(""" 
-                SELECT 
-                    cw.Id,
-                    cw.Done,
-                    cw.BeginDate,
-                    cw.EndDate,
-                    c.Name AS CourseName,
-                    c.Faculty AS CourseFaculty
-                FROM CyberdefenseWeekly cw
-                JOIN Course c ON cw.CourseId = c.Id
-            """);
-        }
-
-
-        var undoneStatus = DB.Query<UndoneTask>("SELECT * FROM UndoneTask");
-
+        var weekStatus = LoadWeekStatus();
+        weekStatus = CheckAndResetWeek(weekStatus);
 
         while (true)
         {
-            AnsiConsole.MarkupLine("[yellow]Weekly Tasks[/]");
-            foreach (WeeklyCyberdefenseStatus item in CBWeekStatus)
-            {
-                AnsiConsole.MarkupLine($"[blue{item.CourseName}[/]  {item.IsDone} |");
-            }
+            Console.Clear();
+            RenderWeekStatus(weekStatus);
+            RenderPendingTasks();
 
-
-            AnsiConsole.MarkupLine("[bold red]Weekly Tasks[/]");
-            if (undoneStatus.Count() == 0)
-            {
-                AnsiConsole.MarkupLine("[bold green]Nothing to show[/]");
-            }
-            else
-            {
-                foreach (UndoneTask task in undoneStatus)
-                {
-                    AnsiConsole.Markup($"{task.Content}");
-                    AnsiConsole.Markup($"Expired: {task.End}");
-
-                }
-            }
-
-            var prompt = AnsiConsole.Prompt(
+            var action = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                .Title("Seleccione opcion")
-                        .AddChoices("Marcar hecha"));
+                    .Title("Seleccione opcion")
+                    .AddChoices("Marcar como hecho", "Salir"));
 
-
-            switch (prompt)
+            switch (action)
             {
-                case "Marcar hecha":
-
-                    var cbWeek = CBWeekStatus.Where(x => !x.IsDone);
-                    var uTasks = undoneStatus;
-                    SetDone(cbWeek, uTasks);
+                case "Marcar como hecho":
+                    weekStatus = SetDone(weekStatus);
                     break;
+                case "Salir":
+                    return;
             }
-
 
             WaitForUserInput();
-            Console.Clear();
         }
-
     }
-    private static void SetDone(IEnumerable<WeeklyCyberdefenseStatus> cbWeek, IEnumerable<UndoneTask> undoneTasks)
+
+    private IEnumerable<WeeklyCourse> LoadWeekStatus() => DB.Query<WeeklyCourse>("""
+        SELECT 
+            cw.Id,
+            cw.Done,
+            cw.BeginDate,
+            cw.EndDate,
+            c.Name  AS CourseName,
+            c.Faculty AS CourseFaculty
+        FROM CyberdefenseWeekly cw
+        JOIN Course c ON cw.CourseId = c.Id
+    """);
+
+    private IEnumerable<WeeklyCourse> CheckAndResetWeek(IEnumerable<WeeklyCourse> weekStatus)
     {
-        foreach (WeeklyCyberdefenseStatus item in cbWeek)
+        var today = DateTime.Today;
+        var currentMonday = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
+
+        if (!weekStatus.Any() || weekStatus.First().Begin >= currentMonday)
+            return weekStatus;
+
+        foreach (var item in weekStatus.Where(x => !x.IsDone))
         {
-            
+            DB.Execute(
+                "INSERT INTO Task (Name, BeginDate, EndDate, TypeId, Done) VALUES (@Name, @BeginDate, @EndDate, @TypeId, 0)",
+                new { Name = $"Semanal pendiente: {item.CourseName}", BeginDate = item.BeginDate, EndDate = item.EndDate, TypeId = 1 });
         }
+
+        DB.Execute("""
+            UPDATE CyberdefenseWeekly 
+            SET Done = 0, BeginDate = @BeginDate, EndDate = @EndDate
+        """, new { BeginDate = currentMonday, EndDate = currentMonday.AddDays(7) });
+
+        return LoadWeekStatus();
     }
 
+    private void RenderWeekStatus(IEnumerable<WeeklyCourse> weekStatus)
+    {
+        AnsiConsole.MarkupLine("[yellow bold]── Ciberdefensa semanal ──[/]");
+        foreach (var item in weekStatus)
+            AnsiConsole.MarkupLine($"  {item}");
 
+        AnsiConsole.WriteLine();
+    }
 
+    private void RenderPendingTasks()
+    {
+        var tasks = DB.Query<PendingTask>("""
+            SELECT Id, Name, EndDate FROM Task WHERE Done = 0
+        """);
 
+        AnsiConsole.MarkupLine("[red bold]── Tareas pendientes ──[/]");
+        if (!tasks.Any())
+        {
+            AnsiConsole.MarkupLine("[green]  Sin tareas pendientes[/]");
+        }
+        else
+        {
+            foreach (var task in tasks)
+                AnsiConsole.MarkupLine($"  {task}");
+        }
 
+        AnsiConsole.WriteLine();
+    }
 
+    private IEnumerable<WeeklyCourse> SetDone(IEnumerable<WeeklyCourse> weekStatus)
+    {
+        var pendingWeek = weekStatus.Where(x => !x.IsDone).ToList();
+        var pendingTasks = DB.Query<PendingTask>("SELECT Id, Name, EndDate FROM Task WHERE Done = 0").ToList();
 
+        if (!pendingWeek.Any() && !pendingTasks.Any())
+        {
+            AnsiConsole.MarkupLine("[green]Todo está hecho.[/]");
+            return weekStatus;
+        }
 
+        var choices = new List<(string Label, Action Act)>();
+
+        foreach (var w in pendingWeek)
+            choices.Add(($"[blue]Semanal[/] {w.CourseName}", () =>
+                DB.Execute("UPDATE CyberdefenseWeekly SET Done = 1 WHERE Id = @Id", new { w.Id })));
+
+        foreach (var t in pendingTasks)
+            choices.Add(($"[red]Task[/] {t.Name}", () =>
+                DB.Execute("UPDATE Task SET Done = 1 WHERE Id = @Id", new { t.Id })));
+
+        var labels = choices.Select(x => x.Label).ToList();
+
+        var selected = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("¿Qué marcás como hecho?")
+                .AddChoices(labels));
+
+        choices.First(x => x.Label == selected).Act();
+
+        return LoadWeekStatus();
+    }
+
+    
 
 }

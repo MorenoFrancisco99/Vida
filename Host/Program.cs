@@ -41,7 +41,7 @@ public static class Program
             }
         }
 
-        var db = new Database("/home/oem/Documentos/Repos/Vida/Core/Database/life.db");
+        var db = new Database("/home/francisco/Documentos/Repositories/Vida/Core/Database/life.db");
         var repo = new Repository(db);
         DatabaseInit.Initialize(repo);
 

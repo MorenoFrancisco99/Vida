@@ -59,32 +59,6 @@ public static class DatabaseInit
         """);
 
         repo.Execute("""
-            CREATE TABLE IF NOT EXISTS Task (
-                Id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                Name      TEXT NOT NULL,
-                BeginDate TEXT NOT NULL,
-                Note      TEXT
-            )
-        """);
-
-        repo.Execute("""
-            CREATE TABLE IF NOT EXISTS ExpireableTask (
-                TaskId   INTEGER PRIMARY KEY,
-                CourseId INTEGER NOT NULL,
-                EndDate  TEXT NOT NULL,
-                FOREIGN KEY (TaskId)   REFERENCES Tasks(Id),
-                FOREIGN KEY (CourseId) REFERENCES Courses(Id)
-            )
-        """);
-
-        repo.Execute("""
-            CREATE TABLE IF NOT EXISTS GeneralTask (
-                TaskId INTEGER PRIMARY KEY,
-                FOREIGN KEY (TaskId) REFERENCES Task(Id)
-            )
-        """);
-
-        repo.Execute("""
             CREATE TABLE IF NOT EXISTS CyberdefenseWeekly (
                 Id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 CourseId  INTEGER NOT NULL,
@@ -95,19 +69,42 @@ public static class DatabaseInit
             )
         """);
 
+
         repo.Execute("""
-            CREATE TABLE IF NOT EXISTS UndoneTask (
+            CREATE TABLE IF NOT EXISTS TaskType (
+                Id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL
+            )
+        """);
+
+        repo.Execute("""
+            CREATE TABLE IF NOT EXISTS Task (
                 Id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                Content   TEXT NOT NULL,
+                Name      TEXT,
                 BeginDate TEXT NOT NULL,
-                EndDate   TEXT NOT NULL 
+                EndDate   TEXT,
+                CourseId  INTEGER,
+                TypeId    INTEGER NOT NULL,
+                Done      INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (CourseId) REFERENCES Course(Id),
+                FOREIGN KEY (TypeId)   REFERENCES TaskType(Id)
+            )
+        """);
+    
+    
+        repo.Execute("""
+            CREATE TABLE IF NOT EXISTS Pomodoro (
+                Id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                Date    TEXT NOT NULL,
+                TypeId  INTEGER NOT NULL,
+                FOREIGN KEY (TypeId)    REFERENCES TaskType(Id)
             )
         """);
     }
 
     private static void SetInitialValues(Repository repo)
     {
-        var exists = repo.QuerySingle<int>("SELECT COUNT(*) FROM Course") > 0; 
+        var exists = repo.QuerySingle<int>("SELECT COUNT(*) FROM Course") > 0;
         if (exists) return;
 
         string[] courses = [
@@ -117,7 +114,11 @@ public static class DatabaseInit
         "Algebra II",
         "Probabilidad y Estadistica"
         ];
-
+        string[] types =
+        {
+            "Facultry",
+            "DailyLife"
+        };
 
         foreach (string course in courses)
         {
@@ -134,9 +135,18 @@ public static class DatabaseInit
                 {
                     CourseId = courseId,
                     Done = true,
-                    BeginDate = new DateTime(2026, 5, 11), 
+                    BeginDate = new DateTime(2026, 5, 11),
                     EndDate = new DateTime(2026, 5, 18)//  intentionally expired so a new task is genereated this week
                 });
         }
+
+        foreach (string type in types)
+        {
+            repo.Execute(
+                "INSERT INTO TaskType (Name) VALUES (@Name)",
+                new { Name = type }
+            );
+        }
+
     }
 }
