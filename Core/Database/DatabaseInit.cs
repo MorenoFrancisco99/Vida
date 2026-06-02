@@ -97,6 +97,7 @@ public static class DatabaseInit
                 Id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 Date    TEXT NOT NULL,
                 TypeId  INTEGER NOT NULL,
+                Time    TEXT,
                 FOREIGN KEY (TypeId)    REFERENCES TaskType(Id)
             )
         """);
