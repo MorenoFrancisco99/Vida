@@ -7,6 +7,7 @@ using Spectre.Console;
 using System.Timers;
 using Spectre.Console.Rendering;
 using System.Diagnostics;
+using System.Text;
 
 public class Pomodoro : IModule
 {
@@ -23,11 +24,14 @@ public class Pomodoro : IModule
         DB = db;
     }
 
+
+    SemaphoreSlim semaphore = new SemaphoreSlim(1, 1);
+    bool isPaused = false;
+
     public async Task RunAsync()
     {
         TaskType taskType = null;
         int totalSeconds = 25 * 60;
-        CancellationTokenSource? cts = null;
 
         while (true)
         {
@@ -39,18 +43,13 @@ public class Pomodoro : IModule
                     .AddChoices("Begin", "Set Timer", "Salir"));
 
 
-            if (taskType == null)
-            {
-                PromptForType(out taskType);
-            }
+
             switch (action)
             {
                 case "Begin":
+                    PromptForType(out taskType);
+                    await RunTimerAsync(totalSeconds, taskType);
 
-                    cts = new CancellationTokenSource();
-                    await RunTimerAsync(totalSeconds, cts.Token);
-                    DB.Execute("INSERT INTO Pomodoro (Date, TypeId, Time) VALUES (@Date, @TypeId, @Time)",
-                    new { Date = DateTime.Now.ToString(), TypeId = taskType.Id, Time = totalSeconds });
                     break;
 
                 case "Set Timer":
@@ -63,28 +62,60 @@ public class Pomodoro : IModule
         }
     }
 
-    private async Task RunTimerAsync(int totalSeconds, CancellationToken ct)
+    private async Task RunTimerAsync(int totalSeconds, TaskType tType)
     {
-        await AnsiConsole.Live(BuildTimerPanel(totalSeconds))
+        CancellationTokenSource? cts = new CancellationTokenSource();
+
+        await AnsiConsole.Live(BuildTimerPanel(totalSeconds, taskType: tType))
             .StartAsync(async ctx =>
             {
-                while (totalSeconds > 0 && !ct.IsCancellationRequested)
+                var CountdownTask = RunCountdownAsync(cts.Token, ctx, totalSeconds, tType);
+                var InputTask = Task.Run(() =>
                 {
-                    await Task.Delay(1000, ct).ContinueWith(_ => { });
-                    if (ct.IsCancellationRequested) break;
+                    while (true)
+                    {
+                        var key = Console.ReadKey(intercept: true).Key;
+                        switch (key)
+                        {
+                            case ConsoleKey.P: Pause(); break;
+                            case ConsoleKey.R: Resume(); break;
+                            case ConsoleKey.C: cts.Cancel(); return;
+                        }
+                    }
+                });
 
-                    totalSeconds--;
-                    ctx.UpdateTarget(BuildTimerPanel(totalSeconds));
-                }
+                await Task.WhenAny(CountdownTask, InputTask);
 
-                if (totalSeconds == 0)
-                {
-                    await PlayFinishedAsync(ctx);
-                }
+                //If CountDownTask ended we have to extract the value, otherwise resumes with the same value if necessary
+                totalSeconds = CountdownTask.IsCompletedSuccessfully ? totalSeconds : totalSeconds - CountdownTask.Result;
+
+
+                DB.Execute("INSERT INTO Pomodoro (Date, TypeId, Time) VALUES (@Date, @TypeId, @Time)",
+                        new { Date = DateTime.Now.ToString(), TypeId = tType.Id, Time = totalSeconds });
+                await PlayFinishedAsync(ctx, tType);
+
             });
     }
 
-    private async Task PlayFinishedAsync(LiveDisplayContext ctx)
+    private async Task<int> RunCountdownAsync(CancellationToken ct, LiveDisplayContext ctx, int totalSeconds, TaskType ttype)
+    {
+        while (totalSeconds > 0 && !ct.IsCancellationRequested)
+        {
+            //Check if the semaphore is down
+            await semaphore.WaitAsync(ct);
+            semaphore.Release();
+
+
+            await Task.Delay(1000, ct).ContinueWith(_ => { });
+            if (ct.IsCancellationRequested) return totalSeconds;
+
+            totalSeconds--;
+            ctx.UpdateTarget(BuildTimerPanel(totalSeconds, taskType: ttype));
+        }
+        return totalSeconds;
+    }
+
+    private async Task PlayFinishedAsync(LiveDisplayContext ctx, TaskType ttype)
     {
         bool visible = true;
 
@@ -92,7 +123,7 @@ public class Pomodoro : IModule
         {
             // Parpadeo
             ctx.UpdateTarget(visible
-                ? BuildTimerPanel(0, finished: true)
+                ? BuildTimerPanel(0, ttype, finished: true)
                 : new Align(
                         new Panel(new FigletText("0:00")
                         {
@@ -147,7 +178,7 @@ public class Pomodoro : IModule
                 });
             }
             await Task.Delay(200);
-             if (visible)
+            if (visible)
             {
                 _ = Task.Run(() =>
                 {
@@ -172,7 +203,7 @@ public class Pomodoro : IModule
         Console.ReadKey(intercept: true);
     }
 
-    private IRenderable BuildTimerPanel(int totalSeconds, bool finished = false)
+    private IRenderable BuildTimerPanel(int totalSeconds, TaskType taskType, bool finished = false)
     {
         int minutes = totalSeconds / 60;
         int seconds = totalSeconds % 60;
@@ -187,10 +218,15 @@ public class Pomodoro : IModule
         };
 
         var panel = new Panel(figlet)
+        //.DoubleBorder()
+        //.BorderColor(color)
+        //.Width(100)
+        //
         {
             Border = BoxBorder.Double,
             BorderStyle = new Style(color),
-            Width = 100
+            Width = 100,
+            Header = new PanelHeader($"Actualmente en: {taskType.Name}")
         };
 
         return new Align(panel, HorizontalAlignment.Center);
@@ -225,5 +261,21 @@ public class Pomodoro : IModule
         return tasktype = types.FirstOrDefault(x => x.Name == selection)!;
     }
 
+    private void Pause()
+    {
+        if (!isPaused)
+        {
+            semaphore.Wait();
+            isPaused = true;
+        }
+    }
 
+    private void Resume()
+    {
+        if (isPaused)
+        {
+            semaphore.Release();
+            isPaused = false;
+        }
+    }
 }
