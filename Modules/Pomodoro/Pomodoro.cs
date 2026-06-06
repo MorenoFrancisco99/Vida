@@ -70,23 +70,30 @@ public class Pomodoro : IModule
             .StartAsync(async ctx =>
             {
                 var CountdownTask = RunCountdownAsync(cts.Token, ctx, totalSeconds, tType);
-                var InputTask = Task.Run(() =>
+
+                var InputTask = Task.Run(async () =>
                 {
-                    while (true)
+                    while (!cts.Token.IsCancellationRequested)
                     {
-                        var key = Console.ReadKey(intercept: true).Key;
-                        switch (key)
+                        //Los metodos de consola blockean todos los threads que necesiten acceder
+                        //Hay que evitar a toda costa usar metodos a menos que sea estrictamente necesario
+                        if (Console.KeyAvailable)
                         {
-                            case ConsoleKey.P: Pause(); break;
-                            case ConsoleKey.R: Resume(); break;
-                            case ConsoleKey.C: cts.Cancel(); return;
+                            var key = Console.ReadKey(intercept: true).Key;
+                            switch (key)
+                            {
+                                case ConsoleKey.P: Pause(); break;
+                                case ConsoleKey.R: Resume(); break;
+                                case ConsoleKey.C: cts.Cancel(); return;
+                            }
                         }
+                        await Task.Delay(100, cts.Token).ContinueWith(_ => { });
                     }
                 });
 
                 await Task.WhenAny(CountdownTask, InputTask);
+                cts.Cancel(); //Si countdowntask termina, tiene cancela el inputtask
 
-                //If CountDownTask ended we have to extract the value, otherwise resumes with the same value if necessary
                 totalSeconds = CountdownTask.IsCompletedSuccessfully ? totalSeconds : totalSeconds - CountdownTask.Result;
 
 
@@ -101,8 +108,15 @@ public class Pomodoro : IModule
     {
         while (totalSeconds > 0 && !ct.IsCancellationRequested)
         {
-            //Check if the semaphore is down
-            await semaphore.WaitAsync(ct);
+            try
+            {
+                await semaphore.WaitAsync(ct); //Si el task es cancelado cuando esta en pausa, el semaforo levanta excepcion
+
+            }
+            catch (OperationCanceledException)
+            {
+                return totalSeconds;
+            }
             semaphore.Release();
 
 
