@@ -4,20 +4,16 @@ using static SpectreConsoleUtilities;
 using Core;
 using Core.Types;
 using Spectre.Console;
-using System.Timers;
 using Spectre.Console.Rendering;
 using System.Diagnostics;
-using System.Text;
 
 public class Pomodoro : IModule
 {
-    private static System.Timers.Timer Clock;
-
     public string Name => "Pomodoro";
 
     public string Description => "Manages pomodoro settings";
 
-    public Repository DB { get; set; }
+    public Repository? DB { get; set; }
 
     public void GetDatabase(Repository db)
     {
@@ -30,7 +26,7 @@ public class Pomodoro : IModule
 
     public async Task RunAsync()
     {
-        TaskType taskType = null;
+        TaskType? taskType = null;
         int totalSeconds = 25 * 60;
 
         while (true)
@@ -40,7 +36,7 @@ public class Pomodoro : IModule
             var action = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("Seleccione opcion")
-                    .AddChoices("Begin", "Set Timer", "Salir"));
+                    .AddChoices("Begin", "Set Timer", "Show Stats", "Salir"));
 
 
 
@@ -54,6 +50,9 @@ public class Pomodoro : IModule
 
                 case "Set Timer":
                     totalSeconds = PromptForTime();
+                    break;
+                case "Show Stats":
+                    ShowStats();
                     break;
 
                 case "Salir":
@@ -97,8 +96,8 @@ public class Pomodoro : IModule
                 totalSeconds = CountdownTask.IsCompletedSuccessfully ? totalSeconds : totalSeconds - CountdownTask.Result;
 
 
-                DB.Execute("INSERT INTO Pomodoro (Date, TypeId, Time) VALUES (@Date, @TypeId, @Time)",
-                        new { Date = DateTime.Now.ToString(), TypeId = tType.Id, Time = totalSeconds });
+                DB!.Execute("INSERT INTO Pomodoro (Date, TypeId, Time) VALUES (@Date, @TypeId, @Time)",
+                        new { Date = DateTime.Now.ToString(), TypeId = tType.Name, Time = totalSeconds });
                 await PlayFinishedAsync(ctx, tType);
 
             });
@@ -264,7 +263,7 @@ public class Pomodoro : IModule
     private TaskType PromptForType(out TaskType tasktype)
     {
 
-        var types = DB.Query<TaskType>("SELECT * FROM TaskType");
+        var types = DB!.Query<TaskType>("SELECT * FROM TaskType");
         var labels = types.Select(x => x.Name);
         var selection = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
@@ -292,4 +291,63 @@ public class Pomodoro : IModule
             isPaused = false;
         }
     }
+
+    private void ShowStats()
+    {
+        List<PomodoroData> data;
+        Console.Clear();
+        try
+        {
+            try
+            {
+                data = DB!.Query<PomodoroData>("SELECT * FROM Pomodoro").ToList();
+
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red bold] Failure fetching data. [/] Returning...");
+                Console.WriteLine(ex);
+                WaitForUserInput();
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Hre");
+            Console.Read();
+            return;
+
+        }
+
+
+        var clData = data.Select(x => new
+        {
+            Id = x.Id,
+            Date = x.Date,
+            Type = x.TypeId,
+            Time = int.Parse(x.Time) / 60
+        })
+        .GroupBy(x => x.Type)
+        .Select(x => new
+        {
+            Key = x.Key,
+            Total = x.Sum(g => g.Time)
+        });
+        try
+        {
+            foreach (var element in clData)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[green]{element.Key}:[/] {element.Total} minutos / {element.Total / 60} horas");
+            }
+            WaitForUserInput();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HEHRE");
+            Console.Read();
+        }
+
+    }
+
+
 }
